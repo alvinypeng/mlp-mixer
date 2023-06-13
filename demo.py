@@ -6,13 +6,13 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.utils.data as data
+from torch.utils.tensorboard import SummaryWriter
 import torchvision
 from torchvision import transforms
 
 from architecture import MLPMixer
 
 
-# Set up logging
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ def train(model: nn.Module, device, train_loader, optimizer, epoch) -> None:
                 100. * batch_idx / len(train_loader), loss.item()))
             
             
-def test(model: nn.Module, device, test_loader):
+def test(model: nn.Module, device, test_loader, epoch, writer):
     model.eval()
     
     test_loss = 0
@@ -50,22 +50,25 @@ def test(model: nn.Module, device, test_loader):
             correct += pred.eq(target.view_as(pred)).sum().item()
             
     test_loss /= len(test_loader.dataset)
+    test_accuracy = 100. * correct / len(test_loader.dataset)
     
     logger.info('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
-        test_loss, correct, len(test_loader.dataset),
-        100. * correct / len(test_loader.dataset)))
-
+        test_loss, correct, len(test_loader.dataset), test_accuracy))
+        
+    writer.add_scalar('Test loss', test_loss, epoch)
+    writer.add_scalar('Test accuracy', test_accuracy, epoch)
+    
 
 def main():
     parser = argparse.ArgumentParser(description='MLP-Mixer for Food101')
     
     # Paths
-    parser.add_argument('--data_path', type=str,
+    parser.add_argument('--data_path', type=str, default='Food101',
                         help='path to dataset')
-    parser.add_argument('--checkpoint_path', type=str,
+    parser.add_argument('--checkpoint_path', type=str, default='checkpoint.pt',
                         help='path to save/load checkpoint')
-    parser.add_argument('--logging_path', type=str, default='log.txt',
-                        help='path to save logging information')
+    parser.add_argument('--tensorboard_path', type=str, default='log',
+                        help='path for tensorboard paths')
     parser.add_argument('--num_workers', type=int, default=4,
                         help='number of worker threads for data loading')
         
@@ -74,7 +77,7 @@ def main():
                         help='number of total epochs to run')
     parser.add_argument('--batch_size', default=64, type=int,
                         help='number of samples in a batch')
-    parser.add_argument('--lr', default=0.005, type=float,
+    parser.add_argument('--lr', default=3e-4, type=float,
                         help='learning rate for ADAM optimizer')
     
     args = parser.parse_args()
@@ -116,7 +119,7 @@ def main():
                      token_mixing_dim=256, channel_mixing_dim=2048, 
                      n_blocks=8, n_classes=101).to(device)
     
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr)
     
     # Load checkpoint if specified
     if os.path.isfile(args.checkpoint_path):
@@ -127,11 +130,14 @@ def main():
         logger.info(f'Loaded checkpoint from epoch {epoch}')
     else:
         epoch = 0
+
+    # For tensorboard graphs
+    writer = SummaryWriter(args.tensorboard_path)
         
     # Train and validate for specified number of epochs
     for epoch in range(epoch, args.epochs):
         train(model, device, train_loader, optimizer, epoch)
-        test(model, device, test_loader)
+        test(model, device, test_loader, epoch, writer)
         
         # Save checkpoint
         torch.save({
